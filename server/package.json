@@ -1,0 +1,28 @@
+{
+  "name": "dis-ne-jwtauthmodule",
+  "version": "1.0.0",
+  "description": "Complete token based authentication module with, sign in, sign up, 2fa, and  reset password capabilities",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Developers-In/DIS-NE-JwtAuthModule.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Developers-In/DIS-NE-JwtAuthModule/issues"
+  },
+  "homepage": "https://github.com/Developers-In/DIS-NE-JwtAuthModule#readme",
+  "dependencies": {
+    "bcrypt": "^5.0.1",
+    "dotenv": "^10.0.0",
+    "express": "^4.17.1",
+    "jsonwebtoken": "^8.5.1",
+    "mongoose": "^5.13.7",
+    "nodemailer": "^6.7.0",
+    "nodemon": "^2.0.14"
+  }
+}
