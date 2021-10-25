@@ -20,6 +20,11 @@ const UserSchema = mongoose.Schema({
         type: Boolean,
         required: true,
         default: false
+    },
+    verifiedLogin: {
+        type: Boolean,
+        required: true,
+        default: false
     }
 });
 UserSchema.methods.generateVerificationToken = function () {
@@ -27,8 +32,9 @@ UserSchema.methods.generateVerificationToken = function () {
     const verificationToken = jwt.sign(
         { ID: user._id },
         process.env.USER_VERIFICATION_TOKEN_SECRET,
-        { expiresIn: "1h" }
+        { expiresIn: "15m" }
     );
     return verificationToken;
 };
+
 module.exports = mongoose.model("User", UserSchema);
