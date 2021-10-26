@@ -1,11 +1,13 @@
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
+
 const UserSchema = mongoose.Schema({
     _id: mongoose.Schema.Types.ObjectId,
     username: {
         type: String,
         required: true,
-        unique: true,
+        minlength: 3,
+        maxlength: 20
     },
     email: {
         type: String,
@@ -16,17 +18,13 @@ const UserSchema = mongoose.Schema({
         type: String,
         required: true,
     },
-    verified: {
+    verifiedSignUp: {
         type: Boolean,
         required: true,
         default: false
     },
-    verifiedLogin: {
-        type: Boolean,
-        required: true,
-        default: false
-    }
-});
+}, { timestamps: true });
+
 UserSchema.methods.generateVerificationToken = function () {
     const user = this;
     const verificationToken = jwt.sign(
@@ -35,6 +33,16 @@ UserSchema.methods.generateVerificationToken = function () {
         { expiresIn: "15m" }
     );
     return verificationToken;
+};
+
+UserSchema.methods.generateForgotPasswordToken = function () {
+    const user = this;
+    const forgotToken = jwt.sign(
+        { password: user.password },
+        process.env.USER_VERIFICATION_TOKEN_SECRET,
+        { expiresIn: "15m" }
+    );
+    return forgotToken;
 };
 
 module.exports = mongoose.model("User", UserSchema);

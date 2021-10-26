@@ -3,6 +3,7 @@ const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user_model.js');
+const { authSchema, signInSchema } = require('../validators/validator.js')
 
 const transporter = nodemailer.createTransport({
     service: "Gmail",
@@ -13,16 +14,13 @@ const transporter = nodemailer.createTransport({
 });
 
 exports.signup = async (req, res) => {
-    const { username, email, password } = req.body
 
-    if (!email || !username || !password) {
-        return res.status(422).send({ message: "Username, Email, Password can not be empty." });
-    }
-    if (password.length < 8) {
-        return res.status(422).send({ message: "password must be longer than 8 characters" });
-    }
-    try {
-        const existingUser = await User.findOne({ email }).exec();
+    const { value, error } = authSchema.validate(req.body);
+
+    if (error) {
+        return res.status(400).send(error.details[0].message)
+    } else {
+        const existingUser = await User.findOne({ email: value.email });
         if (existingUser) {
             return res.status(409).send({
                 message: "This email already exists in the database."
@@ -30,41 +28,39 @@ exports.signup = async (req, res) => {
         }
 
         const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(req.body.password, salt);
+        const hashedPassword = await bcrypt.hash(value.password, salt);
 
         const newUser = new User({
             _id: new mongoose.Types.ObjectId,
-            username: username,
-            email: email,
+            username: value.username,
+            email: value.email,
             password: hashedPassword
         })
         const user = await newUser.save()
 
         const verificationToken = user.generateVerificationToken();
 
-        const url = `http://localhost:5000/api/verify/${verificationToken}`
+        const url = `http://localhost:5000/api/verifySignUp/${verificationToken}`
         transporter.sendMail({
-            to: email,
-            subject: 'Verify Account',
+            to: value.email,
+            subject: 'Account Verification',
             html: `Your account has been created successfully!! <br/><br/> Please click <a href = '${url}'>here</a> to confirm your email.`
         })
         return res.status(200).json({ userId: user._id });
-    } catch (err) {
-        return res.status(500).send(err);
     }
 }
 
-exports.verify = async (req, res) => {
-    const { token } = req.params
-    if (!token) {
+exports.verifySignUp = async (req, res) => {
+    const { verificationToken } = req.params;
+    if (!verificationToken) {
         return res.status(422).send({
-            message: "Token is Missing"
+            message: "Token is Required"
         });
     }
     let payload = null
     try {
         payload = jwt.verify(
-            token,
+            verificationToken,
             process.env.USER_VERIFICATION_TOKEN_SECRET
         );
     } catch (err) {
@@ -77,10 +73,11 @@ exports.verify = async (req, res) => {
                 message: "User does not  exists"
             });
         }
-        user.verified = true;
+        user.verifiedSignUp = true;
+        user.verifiedSignIn = true;
         await user.save();
         res.status(200).send({
-            message: "Account Verified"
+            message: "Account is Verified"
         });
     } catch (err) {
         return res.status(500).send(err);
@@ -88,56 +85,57 @@ exports.verify = async (req, res) => {
 }
 
 exports.signin = async (req, res) => {
-    const { email, password } = req.body
-    if (!email || !password) {
-        return res.status(422).send({
-            message: "Email or Password can not be empty"
-        });
-    }
 
-    try {
-        const user = await User.findOne({ email }).exec();
-        if (!user) {
-            return res.status(400).json("Wrong Credentials")
-        }
-        const validated = await bcrypt.compare(req.body.password, user.password)
-        if (!validated) {
-            return res.status(400).json("Wrong Credentials")
-        }
+    const { value, error } = signInSchema.validate(req.body);
 
-        if (!user.verified) {
-            return res.status(403).send({
-                message: "Please Verify your Account."
-            });
-        } else {
-            const verificationToken = user.generateVerificationToken();
+    if (error) {
+        return res.status(400).send(error.details[0].message)
+    } else {
+        try {
+            const user = await User.findOne({ email: value.email }).exec();
+            if (!user) {
+                return res.status(400).json("Invalid Credentials")
+            }
+            const validated = await bcrypt.compare(value.password, user.password)
+            if (!validated) {
+                return res.status(400).json("Invalid Credentials")
+            }
 
-            const url = `http://localhost:5000/api/verifyLogin/${verificationToken}`
-            transporter.sendMail({
-                to: email,
-                subject: 'Signin Verification',
-                html: `Please click <a href = '${url}'>here</a> to verify your signin.`
-            })
+            if (!user.verifiedSignUp) {
+                return res.status(403).send({
+                    message: "Please Verify your Account."
+                });
+            } else {
+                const verificationToken = user.generateVerificationToken();
+
+                const url = `http://localhost:5000/api/verifySignIn/${verificationToken}`
+                transporter.sendMail({
+                    to: value.email,
+                    subject: 'Signin Verification',
+                    html: `Please click <a href = '${url}'>here</a> to verify your signin.`
+                })
+                return res.status(200).send({
+                    message: `Verification token has sent to ${value.email}`
+                });
+            }
+
+        } catch (err) {
+            return res.status(500).send(err);
         }
-        return res.status(200).send({
-            message: `Verification token has sent to ${email}`
-        });
-    } catch (err) {
-        return res.status(500).send(err);
     }
 }
 
-exports.verifyLogin = async (req, res) => {
-    const { token } = req.params
-    if (!token) {
+exports.verifySignIn = async (req, res) => {
+    const { verificationToken } = req.params
+    if (!verificationToken) {
         return res.status(422).send({
-            message: "Token is Missing"
+            message: "Token is Required"
         });
     }
     let payload = null
     try {
         payload = jwt.verify(
-            token,
+            verificationToken,
             process.env.USER_VERIFICATION_TOKEN_SECRET
         );
     } catch (err) {
@@ -150,74 +148,42 @@ exports.verifyLogin = async (req, res) => {
                 message: "User does not  exists"
             });
         }
-        user.verifiedLogin = true;
-        await user.save();
-        return res.redirect('/api/');
+        return res.status(200).json({ message: "User signed in successfully" })
     } catch (err) {
         return res.status(500).send(err);
     }
 }
 
-exports.home = async (req, res) => {
-    res.send("This is Home Page")
-}
-
-exports.logout = async (req, res) => {
-    try {
-        const user = await User.findById(req.params.id);
-        try {
-            if (user.verifiedLogin) {
-                user.verifiedLogin = false;
-                await user.save();
-                return res.status(200).send({
-                    message: `User Loged out Successfully`
-                });
-            } else {
-                return res.status(200).send({
-                    message: `User has not logged in`
-                });
-            }
-        } catch (err) {
-            return res.status(500).send(err);
-        }
-    } catch (err) {
-        res.status(404).json("User not found!");
-    }
-}
-
 exports.forgotPassword = async (req, res) => {
     try {
-        const user = await User.findById(req.params.id);
+        const user = await User.findById(req.params.userId);
         try {
             if (user) {
-                const verificationToken = user.generateVerificationToken();
-                let id = user.id
-                let email = user.email
-                const url = `http://localhost:5000/api/resetPassword/${id}/${verificationToken}`
+                const verificationToken = user.generateForgotPasswordToken();
+                const url = `http://localhost:5000/api/resetPassword/${user.id}/${verificationToken}`
                 transporter.sendMail({
-                    to: email,
+                    to: user.email,
                     subject: 'Reset Password',
                     html: `Please click <a href = '${url}'>here</a> to reset your password.`
                 })
-
                 return res.status(200).send({
-                    message: `Reset password link has sent to ${email}`
+                    message: `Reset password link has sent to ${user.email}`
                 });
             }
         } catch (err) {
             return res.status(500).send(err);
         }
     } catch (err) {
-        res.status(404).json("User not found!");
+        res.status(404).send({ message: "User does not exists!" });
     }
 }
 
 //GET
 exports.resetPassword = async (req, res) => {
-    const { id, verificationToken } = req.params;
+    const { userId, verificationToken } = req.params;
 
     try {
-        const user = await User.findById(id);
+        const user = await User.findById(userId);
         try {
             if (user) {
                 try {
@@ -226,7 +192,7 @@ exports.resetPassword = async (req, res) => {
                         process.env.USER_VERIFICATION_TOKEN_SECRET
                     );
                     return res.status(200).send({
-                        message: `UserId is valid`, verificationToken: verificationToken
+                        message: `UserId is valid`
                     });
                 } catch (err) {
                     return res.status(500).send(err);
@@ -236,20 +202,24 @@ exports.resetPassword = async (req, res) => {
             return res.status(500).send(err);
         }
     } catch (err) {
-        res.status(404).json("UserId is invalid!");
+        res.status(404).send({
+            message: `UserId is valid`
+        });
     }
 
 }
 
 //POST
 exports.resetPasswordPost = async (req, res) => {
-    const { id, verificationToken } = req.params;
+    const { userId, verificationToken } = req.params;
     const { password, confirmPassword } = req.body;
-
+    
     try {
-        const user = await User.findById(id);
+        const user = await User.findById(userId);
+        
         try {
             if (user) {
+                console.log(user)
                 try {
                     payload = jwt.verify(
                         verificationToken,
@@ -262,17 +232,17 @@ exports.resetPasswordPost = async (req, res) => {
                     ]
 
                     if (conditionsArray.includes(true)) {
-                        res.status(404).json("Password invalid!");
+                        res.status(404).send({message: "Password is invalid!"});
                     } else {
                         const salt = await bcrypt.genSalt(10);
                         const hashedPass = await bcrypt.hash(req.body.confirmPassword, salt);
                         let newPassword = {}
                         newPassword.password = hashedPass
 
-                        await User.findByIdAndUpdate(id, {
+                        await User.findByIdAndUpdate(userId, {
                             $set: newPassword
                         }, { upsert: true });
-                        res.status(200).json("Password Updated Successfully");
+                        res.status(200).send({message: "Password updated successfully!"});
                     }
                 } catch (err) {
                     return res.status(500).send(err);
@@ -282,7 +252,35 @@ exports.resetPasswordPost = async (req, res) => {
             return res.status(500).send(err);
         }
     } catch (err) {
+        res.status(404).send({message: "UserId is invalid!"});
+    }
+}
+
+exports.resendVerificationToken = async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        const user = await User.findById(userId);
+        try {
+            if (user.verifiedSignUp) {
+                const verificationToken = user.generateVerificationToken();
+                let email = user.email;
+                const url = `http://localhost:5000/api/verifySignIn/${verificationToken}`
+                transporter.sendMail({
+                    to: email,
+                    subject: 'Signin Verification',
+                    html: `Please click <a href = '${url}'>here</a> to verify your signin.`
+                })
+                return res.status(200).send({
+                    message: `verification email has sent to ${email}`
+                });
+            } else {
+                res.status(404).json("Please verify your account first")
+            }
+        } catch (err) {
+            res.status(404).json(err.message)
+        }
+    } catch (err) {
         res.status(404).json("UserId is invalid!");
     }
-
 }
