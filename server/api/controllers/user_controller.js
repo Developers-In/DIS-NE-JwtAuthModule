@@ -1,9 +1,8 @@
-const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user_model.js');
-const { authSchema, signInSchema } = require('../validators/validator.js')
+const { authSchema, signInSchema } = require('../validators/validator.js');
 
 const transporter = nodemailer.createTransport({
     service: "Gmail",
@@ -12,6 +11,52 @@ const transporter = nodemailer.createTransport({
         pass: process.env.EMAIL_PASSWORD,
     },
 });
+
+const generateAccessToken = (user) => {
+    return jwt.sign(
+        { ID: user.id },
+        process.env.USER_VERIFICATION_TOKEN_SECRET,
+        { expiresIn: "15m" }
+    );
+}
+
+const generateRefreshToken = (user) => {
+    return jwt.sign(
+        { ID: user.id },
+        process.env.USER_REFRESH_TOKEN_SECRET,
+    );
+}
+
+const generateForgotPasswordToken = (user) => {
+    //let secret = "jbjbcbfhdbfjdj" + user.password
+    return jwt.sign(
+        { ID: user.id },
+        process.env.USER_VERIFICATION_TOKEN_SECRET + user.password,
+        { expiresIn: "15m" }
+    );
+};
+
+let refreshTokens = [];
+
+exports.createRefreshToken = async (req, res) => {
+    const refreshToken = req.body.token;
+
+    if (!refreshToken) return res.status(401).send({ message: 'You are not authenticated!' });
+    if (!refreshTokens.includes(refreshToken)) {
+        return res.status(403).send({ message: 'Refresh Token is invalid!' });
+    }
+    jwt.verify(
+        refreshToken, process.env.USER_REFRESH_TOKEN_SECRET, (err, user) => {
+            err && console.log(err);
+            refreshTokens = refreshTokens.filter((token) => token !== refreshToken)
+
+            const newVerificationToken = generateAccessToken(user)
+            const newRefreshToken = generateRefreshToken(user)
+            refreshTokens.push(newRefreshToken);
+            res.status(200).json({ verificationToken: newVerificationToken, refreshToken: newRefreshToken })
+        }
+    );
+}
 
 exports.signup = async (req, res) => {
 
@@ -31,14 +76,15 @@ exports.signup = async (req, res) => {
         const hashedPassword = await bcrypt.hash(value.password, salt);
 
         const newUser = new User({
-            _id: new mongoose.Types.ObjectId,
             username: value.username,
             email: value.email,
             password: hashedPassword
         })
         const user = await newUser.save()
 
-        const verificationToken = user.generateVerificationToken();
+        const verificationToken = generateAccessToken(user);
+        const refreshToken = generateRefreshToken(user);
+        refreshTokens.push(refreshToken);
 
         const url = `http://localhost:5000/api/verifySignUp/${verificationToken}`
         transporter.sendMail({
@@ -46,7 +92,11 @@ exports.signup = async (req, res) => {
             subject: 'Account Verification',
             html: `Your account has been created successfully!! <br/><br/> Please click <a href = '${url}'>here</a> to confirm your email.`
         })
-        return res.status(200).json({ userId: user._id });
+        return res.status(200).json({
+            userId: user._id,
+            verificationToken: verificationToken,
+            refreshToken: refreshToken
+        });
     }
 }
 
@@ -94,11 +144,11 @@ exports.signin = async (req, res) => {
         try {
             const user = await User.findOne({ email: value.email }).exec();
             if (!user) {
-                return res.status(400).json("Invalid Credentials")
+                return res.status(400).send({ message: "Invalid Credentials" })
             }
             const validated = await bcrypt.compare(value.password, user.password)
             if (!validated) {
-                return res.status(400).json("Invalid Credentials")
+                return res.status(400).send({ message: "Invalid Credentials" })
             }
 
             if (!user.verifiedSignUp) {
@@ -106,7 +156,9 @@ exports.signin = async (req, res) => {
                     message: "Please Verify your Account."
                 });
             } else {
-                const verificationToken = user.generateVerificationToken();
+                const verificationToken = generateAccessToken(user);
+                const refreshToken = generateRefreshToken(user);
+                refreshTokens.push(refreshToken);
 
                 const url = `http://localhost:5000/api/verifySignIn/${verificationToken}`
                 transporter.sendMail({
@@ -115,7 +167,9 @@ exports.signin = async (req, res) => {
                     html: `Please click <a href = '${url}'>here</a> to verify your signin.`
                 })
                 return res.status(200).send({
-                    message: `Verification token has sent to ${value.email}`
+                    message: `Verification token has sent to ${value.email}`,
+                    verificationToken: verificationToken,
+                    refreshToken: refreshToken
                 });
             }
 
@@ -159,7 +213,7 @@ exports.forgotPassword = async (req, res) => {
         const user = await User.findById(req.params.userId);
         try {
             if (user) {
-                const verificationToken = user.generateForgotPasswordToken();
+                const verificationToken = generateForgotPasswordToken(user);
                 const url = `http://localhost:5000/api/resetPassword/${user.id}/${verificationToken}`
                 transporter.sendMail({
                     to: user.email,
@@ -178,7 +232,7 @@ exports.forgotPassword = async (req, res) => {
     }
 }
 
-//GET
+
 exports.resetPassword = async (req, res) => {
     const { userId, verificationToken } = req.params;
 
@@ -189,7 +243,7 @@ exports.resetPassword = async (req, res) => {
                 try {
                     payload = jwt.verify(
                         verificationToken,
-                        process.env.USER_VERIFICATION_TOKEN_SECRET
+                        process.env.USER_VERIFICATION_TOKEN_SECRET + user.password
                     );
                     return res.status(200).send({
                         message: `UserId is valid`
@@ -209,21 +263,19 @@ exports.resetPassword = async (req, res) => {
 
 }
 
-//POST
 exports.resetPasswordPost = async (req, res) => {
     const { userId, verificationToken } = req.params;
     const { password, confirmPassword } = req.body;
-    
+
     try {
         const user = await User.findById(userId);
-        
+
         try {
             if (user) {
-                console.log(user)
                 try {
                     payload = jwt.verify(
                         verificationToken,
-                        process.env.USER_VERIFICATION_TOKEN_SECRET
+                        process.env.USER_VERIFICATION_TOKEN_SECRET + user.password
                     );
 
                     const conditionsArray = [
@@ -232,7 +284,7 @@ exports.resetPasswordPost = async (req, res) => {
                     ]
 
                     if (conditionsArray.includes(true)) {
-                        res.status(404).send({message: "Password is invalid!"});
+                        res.status(404).send({ message: "Password is invalid!" });
                     } else {
                         const salt = await bcrypt.genSalt(10);
                         const hashedPass = await bcrypt.hash(req.body.confirmPassword, salt);
@@ -242,7 +294,7 @@ exports.resetPasswordPost = async (req, res) => {
                         await User.findByIdAndUpdate(userId, {
                             $set: newPassword
                         }, { upsert: true });
-                        res.status(200).send({message: "Password updated successfully!"});
+                        res.status(200).send({ message: "Password updated successfully!" });
                     }
                 } catch (err) {
                     return res.status(500).send(err);
@@ -252,7 +304,7 @@ exports.resetPasswordPost = async (req, res) => {
             return res.status(500).send(err);
         }
     } catch (err) {
-        res.status(404).send({message: "UserId is invalid!"});
+        res.status(404).send({ message: "UserId is invalid!" });
     }
 }
 
@@ -263,7 +315,10 @@ exports.resendVerificationToken = async (req, res) => {
         const user = await User.findById(userId);
         try {
             if (user.verifiedSignUp) {
-                const verificationToken = user.generateVerificationToken();
+                const verificationToken = generateAccessToken(user);
+                const refreshToken = generateRefreshToken(user);
+                refreshTokens.push(refreshToken);
+
                 let email = user.email;
                 const url = `http://localhost:5000/api/verifySignIn/${verificationToken}`
                 transporter.sendMail({
@@ -283,4 +338,18 @@ exports.resendVerificationToken = async (req, res) => {
     } catch (err) {
         res.status(404).json("UserId is invalid!");
     }
+}
+
+exports.getAllUsers = async (req, res) => {
+    const { userId } = req.params;
+    try {
+        const user = await User.findById(userId);
+        if (user) {
+            const users = await User.find()
+            res.status(200).json(users)
+        }
+    } catch (err) {
+        res.status(404).json("Unauthorized UserId!");
+    }
+
 }

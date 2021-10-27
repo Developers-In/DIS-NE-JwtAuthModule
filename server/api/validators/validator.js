@@ -15,6 +15,7 @@ const authSchema = Joi.object({
         .email({ minDomainSegments: 2, tlds: { allow: ['com', 'net'] } })
 }).options({abortEarly: false})
 
+
 const signInSchema = Joi.object({
 
     email: Joi.string()
@@ -25,6 +26,5 @@ const signInSchema = Joi.object({
 
     
 }).options({abortEarly: false})
-
 
 module.exports = {authSchema, signInSchema};
