@@ -28,15 +28,15 @@ const generateRefreshToken = (user) => {
 }
 
 const generateForgotPasswordToken = (user) => {
-    //let secret = "jbjbcbfhdbfjdj" + user.password
     return jwt.sign(
         { ID: user.id },
         process.env.USER_VERIFICATION_TOKEN_SECRET + user.password,
-        { expiresIn: "15m" }
+        { expiresIn: "10m" }
     );
 };
 
 let refreshTokens = [];
+
 
 exports.createRefreshToken = async (req, res) => {
     const refreshToken = req.body.token;
@@ -57,6 +57,7 @@ exports.createRefreshToken = async (req, res) => {
         }
     );
 }
+
 
 exports.signup = async (req, res) => {
 
@@ -100,6 +101,7 @@ exports.signup = async (req, res) => {
     }
 }
 
+
 exports.verifySignUp = async (req, res) => {
     const { verificationToken } = req.params;
     if (!verificationToken) {
@@ -133,6 +135,7 @@ exports.verifySignUp = async (req, res) => {
         return res.status(500).send(err);
     }
 }
+
 
 exports.signin = async (req, res) => {
 
@@ -179,6 +182,7 @@ exports.signin = async (req, res) => {
     }
 }
 
+
 exports.verifySignIn = async (req, res) => {
     const { verificationToken } = req.params
     if (!verificationToken) {
@@ -208,27 +212,28 @@ exports.verifySignIn = async (req, res) => {
     }
 }
 
+
 exports.forgotPassword = async (req, res) => {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
     try {
-        const user = await User.findById(req.params.userId);
-        try {
-            if (user) {
-                const verificationToken = generateForgotPasswordToken(user);
-                const url = `http://localhost:5000/api/resetPassword/${user.id}/${verificationToken}`
-                transporter.sendMail({
-                    to: user.email,
-                    subject: 'Reset Password',
-                    html: `Please click <a href = '${url}'>here</a> to reset your password.`
-                })
-                return res.status(200).send({
-                    message: `Reset password link has sent to ${user.email}`
-                });
-            }
-        } catch (err) {
-            return res.status(500).send(err);
+        if (user) {
+            const verificationToken = generateForgotPasswordToken(user);
+            const url = `http://localhost:5000/api/resetPassword/${user.id}/${verificationToken}`
+            transporter.sendMail({
+                to: user.email,
+                subject: 'Reset Password',
+                html: `Please click <a href = '${url}'>here</a> to reset your password.`
+            })
+            return res.status(200).send({
+                message: `Reset password link has sent to ${user.email}`
+            });
+        } else {
+            return res.status(400).send({ message: "Invalid Email Address Provided!" });
         }
     } catch (err) {
-        res.status(404).send({ message: "User does not exists!" });
+        return res.status(500).send(err);
     }
 }
 
@@ -238,30 +243,27 @@ exports.resetPassword = async (req, res) => {
 
     try {
         const user = await User.findById(userId);
-        try {
-            if (user) {
-                try {
-                    payload = jwt.verify(
-                        verificationToken,
-                        process.env.USER_VERIFICATION_TOKEN_SECRET + user.password
-                    );
-                    return res.status(200).send({
-                        message: `UserId is valid`
-                    });
-                } catch (err) {
-                    return res.status(500).send(err);
-                }
+        if (user) {
+            try {
+                payload = jwt.verify(
+                    verificationToken,
+                    process.env.USER_VERIFICATION_TOKEN_SECRET + user.password
+                );
+                return res.status(200).send({
+                    message: "UserId & Token is valid!"
+                });
+            } catch (err) {
+                return res.status(403).send({ message: "Token is invalid!" });
             }
-        } catch (err) {
-            return res.status(500).send(err);
         }
     } catch (err) {
         res.status(404).send({
-            message: `UserId is valid`
+            message: "User does not exists!"
         });
     }
 
 }
+
 
 exports.resetPasswordPost = async (req, res) => {
     const { userId, verificationToken } = req.params;
@@ -308,6 +310,7 @@ exports.resetPasswordPost = async (req, res) => {
     }
 }
 
+
 exports.resendVerificationToken = async (req, res) => {
     const { userId } = req.params;
 
@@ -340,6 +343,7 @@ exports.resendVerificationToken = async (req, res) => {
     }
 }
 
+
 exports.getAllUsers = async (req, res) => {
     const { userId } = req.params;
     try {
@@ -349,7 +353,6 @@ exports.getAllUsers = async (req, res) => {
             res.status(200).json(users)
         }
     } catch (err) {
-        res.status(404).json("Unauthorized UserId!");
+        res.status(404).send({ message: "Unauthorized UserId!" });
     }
-
 }
